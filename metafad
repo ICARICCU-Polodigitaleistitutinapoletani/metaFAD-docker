@@ -1,0 +1,298 @@
+#!/bin/bash
+
+LOCALDIR=$(dirname "$0")
+DOCKER=$(which docker)
+COMPOSE=$(which docker-compose)
+GIT=$(which git)
+CURL=$(which curl)
+DATA="./containerdata"
+SOLR_DATA="${DATA}/solr/cores"
+GIT_URL="https://github.com"
+DOCKER=$(which docker)
+bold=$(tput bold)
+normal=$(tput sgr0)
+
+if [  $# -eq 0 ]; then
+    echo -e "\nUsage: $0 [command]"
+    echo -e "Command:"
+    echo -e "   install"
+    echo -e "   run"
+    echo -e "   start"
+    echo -e "   stop"
+    echo -e "   dump"
+    echo -e "   restoredb"
+    echo -e "   wwwlogs\n"
+    exit 1
+fi
+
+if [ ! -d ./app ]; then
+    mkdir ./app
+fi
+
+REPO="${GIT_URL}/ICARICCU-Polodigitaleistitutinapoletani/metaFAD.git metafad -b main|${GIT_URL}/ICARICCU-Polodigitaleistitutinapoletani/metaFAD-dam.git dam -b main|${GIT_URL}/ICARICCU-Polodigitaleistitutinapoletani/metaFAD-strumag.git stru-mag -b main|${GIT_URL}/ICARICCU-Polodigitaleistitutinapoletani/metaFAD-portale.git portale -b main|${GIT_URL}/ICARICCU-Polodigitaleistitutinapoletani/metaFAD-dam-fe.git dam-fe -b main"
+
+
+function _docker() {
+    if [ -z "${DOCKER}" ]; then
+            echo -e "ERROR: docker command is required\n"
+            exit 1
+    fi
+    if [ -z "${COMPOSE}" ]; then
+            echo -e "ERROR: docker-compose command is required\n"
+            exit 1
+    fi
+    if [ -z "${CURL}" ]; then
+            echo -e "ERROR: curl command is required\n"
+            exit 1
+    fi
+    if [ -z "${GIT}" ]; then
+            echo -e "ERROR: git command is required\n"
+            exit 1
+    fi
+}
+
+function _env() {
+    if [ ! -f dockerdata/.env ]; then
+        echo -e "ERROR: need to launch 'install' before"
+        exit 1
+    fi
+}
+
+function install() {
+    _docker
+
+    if [ ! -f dockerdata/.env ]; then
+        touch dockerdata/.env
+    fi
+
+    if ! grep -q "MYSQL_ROOT_PASSWORD" dockerdata/.env; then
+    read -r -p ${bold}"Set mysql password:${normal} [password] " mysqlpwd
+        if [ -z "${mysqlpwd}" ]; then
+            echo "MYSQL_ROOT_PASSWORD=password" > dockerdata/.env
+        else
+            echo "MYSQL_ROOT_PASSWORD=$mysqlpwd" > dockerdata/.env
+        fi
+    fi
+
+    echo -e "${bold}Cloning repositories...${normal}\n"
+    IFS="|"
+    for i in ${REPO}; do
+        IFS=" "
+        read -a repository <<< $i
+        if [ ! -d ./app/${repository[1]} ]; then
+            $GIT -C ./app/ clone ${repository[0]} ${repository[1]} ${repository[2]} ${repository[3]}
+            if [ ! $? -eq 0 ]; then
+                    echo -e "${bold}Error to cloning $repository${normal}"
+                    exit 1
+            fi
+        else
+            echo -e "${bold}Repository ${repository[1]} already cloned, skipping${normal}"
+        fi
+    done
+
+    # Build images
+    echo -e "\n${bold}Building images...${normal}\n"
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad build
+
+    # Start mysql and solr
+    echo -e "\n${bold}Starting mysql and solr...${normal}\n"
+    sudo chmod 777 ${SOLR_DATA}
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad up -d mysql solr
+
+    echo -e "${bold}\nBuilding metafad...\n${normal}"
+    ${COMPOSE} --env-file dockerdata/.env -f ${LOCALDIR}/dockerdata/docker-compose.yml -p metafad run --rm --no-deps --entrypoint /bin/sh metafad -c 'cd /opt/app/metafad && composer install --no-dev; if [ ! -d /opt/app/metafad/public/cache ];then mkdir /opt/app/metafad/public/cache; fi; chmod 777 /opt/app/metafad/public/cache && chmod 777 /opt/app/metafad/cache && cd /opt/app/stru-mag && if [ ! -d /opt/app/stru-mag/dist ]; then npm install -g bower gulp && npm install && bower install --allow-root && gulp build; fi && if [ ! -h /opt/app/metafad/public/appMagStru ]; then ln -s /opt/app/stru-mag/dist /opt/app/metafad/public/appMagStru; fi && chmod 777 /opt/app/metafad/application/classes/userModules'
+
+    echo -e "${bold}\nBuilding dam...\n${normal}"
+    ${COMPOSE} --env-file dockerdata/.env -f ${LOCALDIR}/dockerdata/docker-compose.yml -p metafad run --rm --no-deps --entrypoint /bin/sh dam -c 'cd /opt/app/dam && composer install --no-dev; if [ ! -d /opt/app/dam/public/admin/cache ]; then mkdir -p /opt/app/dam/public/admin/cache; fi && chmod 777 /opt/app/dam/public/admin/cache && chmod 777 /opt/app/dam/admin/cache && cd /opt/app/dam-fe && if [ ! -d /opt/app/dam-fe/dist ]; then npm install -g bower gulp && npm install && bower install --allow-root && gulp build; fi && if [ ! -h /opt/app/dam/public/dam-fe ]; then ln -s /opt/app/dam-fe/dist /opt/app/dam/public/dam-fe; fi && if [ ! -h /opt/app/dam/public/dam_storage ]; then ln -s /opt/data/dam_storage /opt/app/dam/public/dam_storage; fi'
+
+    echo -e "${bold}\nBuilding portale...\n${normal}"
+    ${COMPOSE} --env-file dockerdata/.env -f ${LOCALDIR}/dockerdata/docker-compose.yml -p metafad run --rm --no-deps --entrypoint /bin/sh portale -c 'cd /opt/app/portale && composer install --no-dev; chmod 777 /opt/app/portale/public/cache && chmod 777 /opt/app/portale/cache && chmod 777 /opt/app/portale/public/admin/cache'
+
+    echo -e "${bold}\nInstalling db base...\n${normal}"
+    if [ ! -f ${DATA}/mysql/mysql_dump/metafad_be.sql ]; then
+        cd ${DATA}/mysql/mysql_dump
+        unzip db_base.zip
+        cd ../../../
+    fi
+
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec mysql bash -c 'mysql -uroot -p${MYSQL_ROOT_PASSWORD} metafad_portale < /mysql_dump/metafad_fe.sql'
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec mysql bash -c 'mysql -uroot -p${MYSQL_ROOT_PASSWORD} metafad_be < /mysql_dump/metafad_be.sql'
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec mysql bash -c 'mysql -uroot -p${MYSQL_ROOT_PASSWORD} metafad_dam < /mysql_dump/metafad_dam.sql'
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec mysql bash -c 'mysql -uroot -p${MYSQL_ROOT_PASSWORD} metafad_ecommerce < /mysql_dump/metafad_ecommerce.sql'
+}
+
+function run() {
+    _docker
+    _env
+
+    if [  $# -eq 0 ]; then
+        echo -e "\nUsage: $0 [container] [action] (install|update)"
+        echo -e "Container:"
+        echo -e "   metafad"
+        echo -e "   portale"
+        echo -e "   dam"
+        echo -e "Example: $0 run metafad composer install\n"
+        exit 1
+    fi
+
+    CONTAINER=$1
+
+    if [ -z "${CONTAINER}" ]; then
+        echo -e "ERROR: Container name is required\n"
+        exit 1
+    fi
+    if [[ "$@" == *"rm"* ]] || [[ "$@" == *"mv"* ]]; then
+        echo -e "ERROR: Command not executable"
+        exit 1
+    fi
+    shift
+    if [ "${CONTAINER}" == "metafad" ]; then
+        CONTAINERPATH="/opt/app/metafad"
+    elif [ "${CONTAINER}" == "portale" ]; then
+        CONTAINERPATH="/opt/app/portale"
+    elif [ "${CONTAINER}" == "dam" ]; then
+        CONTAINERPATH="/opt/app/dam"
+    else
+        echo -e "ERROR: Container ${CONTAINER} does not exist, only 'metafad' or 'dam'\n"
+        exit 1
+    fi
+    COMMAND="${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec ${CONTAINER} sh -c 'cd ${CONTAINERPATH} && $@'"
+    bash -c "${COMMAND}"
+}
+
+function start() {
+    _docker
+    _env
+
+    sudo chmod 777 ${SOLR_DATA}
+
+    # Add ${HOSTNAME} to hosts file
+    for HOSTNAME in $(cat host-local); do
+        sudo bin/manage-hosts.sh add ${HOSTNAME}
+    done
+
+    # Start all containers
+    echo -e "${bold}Start all containers...${normal}"
+    ${COMPOSE} --env-file dockerdata/.env -f ${LOCALDIR}/dockerdata/docker-compose.yml -p metafad up -d
+
+    # Set "*_ss_lower" field into dam core
+    echo -e "${bold}Waiting for starting solr...${normal}"
+    # SOLR_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' metafad_solr_1)
+    while [ ! "$(${CURL} -I http://127.0.0.1:8983/solr/dam/schema 2>/dev/null | head -n 1 | cut -d$' ' -f2)" == "200" ]
+    do
+    :
+    done
+    sleep 10
+
+    echo -e "\nSet "*_ss_lower" field into dam core...\n"
+    ${CURL} -X POST -d '{"add-dynamic-field": {"name": "*_ss_lower","type": "lowercase","stored": true,"indexed": true,"multiValued": true}}' "http://127.0.0.1:8983/solr/dam/schema"
+
+    echo -e "\nSet "*_ss_lower" field into metafad_be core...\n"
+    ${CURL} -X POST -d '{"add-dynamic-field": {"name": "*_ss_lower","type": "lowercase","stored": true,"indexed": true,"multiValued": true}}' "http://127.0.0.1:8983/solr/metafad_be/schema"
+
+    echo -e "\nSet "*_only_store" field into metafad_be core...\n"
+    ${CURL} -X POST -d '{"add-dynamic-field": {"name": "*_only_store","type": "string","stored": true,"indexed": false,"multiValued": false}}' "http://127.0.0.1:8983/solr/metafad_be/schema"
+
+    echo -e "\nSet "*_only_store" field into metafad_fe core...\n"
+    ${CURL} -X POST -d '{"add-dynamic-field": {"name": "*_only_store","type": "string","stored": true,"indexed": false,"multiValued": false}}' "http://127.0.0.1:8983/solr/metafad_fe/schema"
+
+    # Apply right to folder
+    sudo chmod 777 ${DATA}/dam/dam_storage
+    sudo chmod 777 ${DATA}/dam/dam_upload
+    sudo chmod 777 ${DATA}/metafad/import
+    sudo chmod 777 ${DATA}/metafad/storage
+    sudo chmod 777 ${DATA}/metafad/export
+    sudo chmod 777 ${DATA}/metafad/unimarc
+    sudo chmod 777 ${DATA}/metafad/unimarc
+    sudo chmod 777 ${DATA}/metafad/mag
+    sudo chmod 777 ${DATA}/metafad/mag_export
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Archive
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Audio
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Image
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Office
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Other
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Pdf
+    sudo chmod 777 ${DATA}/portale/mediaArchive/Video
+
+    echo -e "Container state:\n"
+    ${COMPOSE} --env-file dockerdata/.env -f ${LOCALDIR}/dockerdata/docker-compose.yml -p metafad ps
+
+}
+
+function stop() {
+    _docker
+
+    read -r -p "${bold}Are you sure? [y/N] ${normal}" response
+    if [[ "$response" =~ ^([yY][eE][sS]|[yY])+$ ]]; then
+        # Stop and remove all containers
+        ${COMPOSE} --env-file dockerdata/.env -f ${LOCALDIR}/dockerdata/docker-compose.yml -p metafad down
+    else
+        exit 0
+    fi
+    # Remove ${HOSTNAME} from hosts file
+    for HOSTNAME in $(cat host-local); do
+        sudo bin/manage-hosts.sh remove ${HOSTNAME}
+    done
+}
+
+function dump() {
+    _docker
+    _env
+
+    DATABASE=$1
+    if [  $# -eq 0 ] || [ -z "${DATABASE}" ]; then
+        echo -e "Usage: $0 dump <database>"
+        exit 1
+    fi
+    cd ${LOCALDIR}
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec mysql /mysql_script/mysqldump.sh ${DATABASE}
+}
+
+function restoredb() {
+    _docker
+    _env
+
+    DATABASE=$1
+    DUMP=$2
+
+    if [  $# -eq 0 ] || [ -z "${DATABASE}" ] || [ -z "${DUMP}" ]; then
+        echo -e "Usage: $0 restoredb <database> <dump>"
+	    echo -e "Dump available:"
+	    echo $(ls -l containerdata/mysql/mysql_dump | awk '{print $9}')
+	    exit 1
+    fi
+
+    cd ${LOCALDIR}
+    ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec mysql /mysql_script/mysqlrestore.sh ${DATABASE} ${DUMP}
+}
+
+function wwwlogs() {
+        WEBSERVER=$1
+        TYPE=$2
+
+    if [  $# -eq 0 ] || [ -z "${WEBSERVER}" ] || [ -z "${TYPE}" ]
+    then
+        echo -e "Usage: $0 wwwlogs <webserver> <type>\n"
+        echo -e "webserver:"
+        echo -e "   portale"
+        echo -e "   metafad"
+        echo -e "   dam"
+        echo -e "type:"
+        echo -e "   access"
+        echo -e "   error\n"
+        exit -1
+    fi
+    if [ $TYPE = "access" ] || [ $TYPE = "error" ]
+    then
+        cd ${LOCALDIR}
+        ${COMPOSE} --env-file dockerdata/.env -f dockerdata/docker-compose.yml -p metafad exec ${WEBSERVER} sh -c "cat /var/log/apache2/${TYPE}.log"
+    else
+        echo -e "\nERROR: wrong type!"
+        echo -e "type:"
+        echo -e "   access"
+        echo -e "   error\n"
+        exit -1
+    fi
+}
+
+$@

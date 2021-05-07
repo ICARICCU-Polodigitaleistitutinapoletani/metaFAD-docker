@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# Run the initdb, then start solr in the foreground
+
+# Start apply rules
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT DROP
+
+# Allow internal connection
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allow outgoung connection etablished
+iptables -A OUTPUT -o eth0 -p tcp -m state --state ESTABLISHED -j ACCEPT
+# Allow ping
+iptables -A OUTPUT -o eth0 -p icmp -j ACCEPT
+
+set -e
+
+if [[ "$VERBOSE" = "yes" ]]; then
+    set -x
+fi
+
+. /opt/docker-solr/scripts/run-initdb
+
+exec solr -f "$@"

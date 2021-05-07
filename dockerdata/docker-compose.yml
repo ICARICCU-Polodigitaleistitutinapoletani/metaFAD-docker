@@ -1,0 +1,297 @@
+version: '3'
+services:
+  traefik:
+    image: traefik:alpine
+    command: --api --docker
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "traefik.enable=false"
+
+  portale:
+    image: metafad/apache
+    build: 
+      context: ./apache/image
+      dockerfile: Dockerfile
+    environment:
+      - SOLR_HOST=http://solr:8983
+      - MYSQL_HOST=mysql
+      - MYSQL_DB_NAME_BE=metafad_be
+      - MYSQL_DB_NAME_FE=metafad_portale
+      - MYSQL_USERNAME=root
+      - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - SMTP_HOST=
+      - SMTP_USER=
+      - SMTP_PSW=
+      - SMTP_SENDER=
+      - SMTP_EMAIL=
+      - METAFAD_URL=http://metafad
+      - METAFAD_URL_EXTERNAL=http://metafad.localhost
+      - DAM_REST_URL=http://dam/admin/rest/dam/
+      - URL_BE=metafad.localhost
+      - URL_FE=metafad-portale.localhost
+      - SOLR_DEFAULT_SEARCH=solr_search_iccd
+      - IIIF_URL=
+      - IIIF_INTERNAL_URL=http://cantaloupe:8182/
+      - SEARCH_SERVICES_HOST=http://iservices:8080
+      - SEARCH_HAS_CUSTOM_SERVICES=
+      - SOLR_CORE_BE=metafad_be
+      - SOLR_CORE_FE=metafad_fe
+      - SOLR_CORE_FE_SBN=metafad_fe_sbn
+      - SOLR_CORE_FE_SBN_AUT=metafad_fe_sbn_aut
+      - SOLR_CORE_FE_ICCD=metafad_fe_iccd
+      - SOLR_CORE_FE_ICCD_AUT=metafad_fe_iccd_aut
+      - SOLR_CORE_FE_ARCHIVE=metafad_fe_archive
+      - SOLR_CORE_FE_ARCHIVE_AUT=metafad_fe_archive_aut
+      - SOLR_CORE_METAINDICE=metaindice
+      - SOLR_CORE_METAINDICE_AUT=metaindice_aut
+    volumes:
+      - ./apache/fe.conf:/etc/apache2/sites-enabled/000-default.conf
+      - ../app/portale:/opt/app/portale
+      - ../containerdata/portale/mediaArchive:/opt/app/portale/application/mediaArchive
+      - ./php/php.ini:/etc/php/7.4/fpm/php.ini
+      - ./php/php.ini:/etc/php/7.4/cli/php.ini
+    depends_on:
+      - mysql
+      - solr
+    labels:
+      - "traefik.backend=portale"
+      - "traefik.backend.buffering.maxRequestBodyBytes=2147483648"
+      - "traefik.frontend.rule=Host:metafad-portale.localhost"
+      - "traefik.port=80"
+
+  metafad:
+    image: metafad/apache
+    build: 
+      context: ./apache/image
+      dockerfile: Dockerfile
+    environment:
+      - SOLR_HOST=http://solr:8983
+      - MYSQL_HOST=mysql
+      - MYSQL_DB_NAME_BE=metafad_be
+      - MYSQL_DB_NAME_FE=metafad_portale
+      - MYSQL_DB_NAME_ECOMMERCE=metafad_ecommerce
+      - MYSQL_DB_NAME_DAM=metafad_dam
+      - MYSQL_USERNAME=root
+      - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - SMTP_HOST=
+      - SMTP_USER=
+      - SMTP_PSW=
+      - SMTP_SENDER=
+      - SMTP_EMAIL=
+      - SMTP_PORT=
+      - SOLR_CORE_BE=metafad_be
+      - SOLR_CORE_FE=metafad_fe
+      - SOLR_CORE_FE_SBN=metafad_fe_sbn
+      - SOLR_CORE_FE_SBN_AUT=metafad_fe_sbn_aut
+      - SOLR_CORE_FE_ICCD=metafad_fe_iccd
+      - SOLR_CORE_FE_ICCD_AUT=metafad_fe_iccd_aut
+      - SOLR_CORE_FE_ARCHIVE=metafad_fe_archive
+      - SOLR_CORE_FE_ARCHIVE_AUT=metafad_fe_archive_aut
+      - SOLR_CORE_METAINDICE=metaindice
+      - SOLR_CORE_METAINDICE_AUT=metaindice_aut
+      - SOLR_CORE_DAM=dam
+      - SEARCH_SERVICES_HOST=http://iservices:8080
+      - GOOGLE_API_KEY=
+      - METAFAD_LOG_LEVEL=48
+      - METAFAD_URL=http://metafad.localhost
+      - METAFAD_FE_URL=http://metafad-portale.localhost
+      - METAFAD_STRUMAG_URL=http://metafad.localhost/appMagStru/#/strumag/
+      - METAFAD_TECA_STRUMAG_URL=http://metafad.localhost/teca-strumag
+      - METAFAD_IMPORT_FOLDER=/opt/data/import
+      - METAFAD_STORAGE_FOLDER=/opt/data/storage
+      - METAFAD_MAG_FOLDER=/opt/data/mag
+      - METAFAD_MAG_EXPORT_FOLDER=/opt/data/mag_export
+      - METAFAD_SBN_FOLDER=/opt/data/unimarc
+      - METAFAD_OAIPMH_IDENTIFIER=
+      - "METAFAD_OAIPMH_DELIMITER=:"
+      - METAFAD_OAIPMH_ID_PREFIX=
+      - METAFAD_OAIPMH_MAX_RECORDS=50
+      - METAFAD_OAIPMH_MAX_IDS=200
+      - METAFAD_OAIPMH_TITLE=MetaFAD
+      - METAFAD_OAIPMH_IDENTIFIER=dev
+      - METAFAD_OAIPMH_EMAIL=info@info.info
+      - METAFAD_OAIPMH_EARLY_DATE=2017-01-01T00:00:00Z
+      - METAFAD_NAME=Demo MetaFAD
+      - METAFAD_FLAG_FE=false
+      - METAFAD_FLAG_SBN=true
+      - DAM_INSTANCE=metafad
+      - DAM_REST_URL=http://dam/admin/rest/dam/
+      - DAM_FE_URL=http://metafad.localhost/dam-fe/
+      - DAM_STORAGE_FOLDER=/opt/data/dam_storage/
+      - DAM_UPLOAD_FOLDER=/opt/data/dam_upload/
+      - METAFAD_HAS_INSTITUTES=true
+      - METAFAD_HAS_IMPORT=true
+      - METAFAD_HAS_EXPORT=true
+      - METAFAD_HAS_MAG=true
+      - METAFAD_HAS_METS=true
+      - METAFAD_HAS_ICCDGENERATOR=true
+      - METAFAD_HAS_DICTIONARIES=true
+      - METAFAD_HAS_MOVIO=true
+      - METAFAD_HAS_ECOMMERCE=true
+      - METAFAD_HAS_METAINDICE=true
+      - METAFAD_HAS_DOWNLOAD=true
+      - METAFAD_HAS_CUSTOMSERVICES=false
+      - METAFAD_MASSIVE_DELETE_ACTIVATE=false
+      - METAFAD_GETICCD_ACTIVATE=false
+      - IIIF_URL=
+      - IIIF_INTERNAL_URL=http://cantaloupe:8182/
+    volumes:
+      - ./apache/be.conf:/etc/apache2/sites-enabled/000-default.conf
+      - ../app/metafad:/opt/app/metafad
+      - ../app/stru-mag:/opt/app/stru-mag
+      - ../containerdata/metafad/unimarc:/opt/data/unimarc
+      - ../containerdata/metafad/import:/opt/data/import
+      - ../containerdata/metafad/storage:/opt/data/storage
+      - ../containerdata/metafad/mag:/opt/data/mag
+      - ../containerdata/metafad/mag_export:/opt/data/mag_export
+      - ../containerdata/metafad/export:/opt/app/metafad/public/export
+      - ../containerdata/dam/dam_storage:/opt/data/dam_storage
+      - ../containerdata/dam/dam_upload:/opt/data/dam_upload
+      - ./php/php.ini:/etc/php/7.4/fpm/php.ini
+      - ./php/php.ini:/etc/php/7.4/cli/php.ini
+      - ./apache/metafad/runJob.sh:/runJob.sh
+      - ./apache/metafad/crontab:/crontab
+    depends_on:
+      - mysql
+      - solr
+    labels:
+      - "traefik.backend=metafad"
+      - "traefik.backend.buffering.maxRequestBodyBytes=2147483648"
+      - "traefik.frontend.rule=Host:metafad.localhost"
+      - "traefik.port=80"
+      - "traefik.frontend.headers.customResponseHeaders=Access-Control-Allow-Origin:*||Access-Control-Allow-Headers:X-Accept-Charset,X-Accept,Content-Type,X-Requested-With,X-File-Name,X-HTTP-Method-Override,Cache-control,Content-Length,Token-Session||Access-Control-Allow-Methods:GET,PUT,POST,DELETE,HEAD,OPTIONS"
+
+  dam:
+    image: metafad/apache
+    build: 
+      context: ./apache/image
+      dockerfile: Dockerfile
+    environment:
+      - SOLR_HOST=http://solr:8983
+      - SOLR_CORE_DAM=dam
+      - MYSQL_HOST=mysql
+      - MYSQL_DB_NAME_DAM=metafad_dam
+      - MYSQL_USERNAME=root
+      - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - DAM_INSTANCE=metafad
+      - DAM_REST_URL=http://metafad.localhost/rest/dam/
+      - DAM_FE_URL=http://metafad.localhost/dam-fe/
+      - DAM_STORAGE_FOLDER=/opt/data/dam_storage/
+      - DAM_UPLOAD_FOLDER=/opt/data/dam_upload/
+      - DAM_ALLOW_ROOT=/opt/data
+      - DAM_ORIGINAL_STORAGE=/opt/data/original_storage
+    volumes:
+      - ./apache/dam.conf:/etc/apache2/sites-enabled/000-default.conf
+      - ../app/dam:/opt/app/dam
+      - ../app/dam-fe:/opt/app/dam-fe
+      - ../containerdata/dam/dam_upload:/opt/data/dam_upload
+      - ../containerdata/dam/dam_storage:/opt/data/dam_storage
+      - ../containerdata/dam/original_storage:/opt/data/original_storage
+      - ../containerdata/metafad/import:/opt/data/import
+      - ../containerdata/metafad/mag:/opt/data/mag
+      - ./php/php.ini:/etc/php/7.4/fpm/php.ini
+      - ./php/php.ini:/etc/php/7.4/cli/php.ini
+      - ./apache/dam/runJob.sh:/runJob.sh
+      - ./apache/dam/crontab:/crontab
+    depends_on:
+      - mysql
+      - solr
+    labels:
+      - "traefik.backend=dam"
+      - "traefik.backend.buffering.maxRequestBodyBytes=2147483648"
+      - "traefik.frontend.rule=Host:metafad.localhost; PathPrefix:/dam-fe"
+      - "traefik.port=80"
+
+  iservices:
+    image: openjdk:8u162-jre-slim
+    volumes:
+      - ./iservices/services:/opt/services
+      - ../containerdata/metafad/unimarc:/opt/data/unimarc
+    working_dir: /opt/services
+    entrypoint:
+      - sh
+      - -c
+      - java -Xmx2g -jar metafad-solr-services.jar
+    environment:
+      - devSwitch=
+      - SOLRBASE=http://solr:8983/solr
+      - JAVA_OPTS=-Xmx2g
+      - RUN_ARGS="--unimarcImportJob.bufferSize=1000"
+      - SPRING_PROFILES_ACTIVE=metafad
+    labels:
+      - "traefik.enable=false"
+
+  solr:
+    image: metafad/solr
+    build: 
+      context: ./solr/image
+      dockerfile: Dockerfile
+    volumes:
+      - ./solr/configsets:/tmp/configsets
+      - ../containerdata/solr/cores:/opt/solr/server/solr/mycores
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - SOLR_CORE=metafad_fe_sbn:metafad,metafad_fe_sbn_aut:metafad,metafad_be,metafad_fe_iccd:metafad,metafad_fe_iccd_aut:metafad,metafad_fe_archive:metafad,metafad_fe_archive_aut:metafad,metaindice:metafad,metaindice_aut:metafad,metafad_fe,dam
+    labels:
+      - "traefik.enable=false"
+    ports:
+      - "127.0.0.1:8983:8983"
+
+  mysql:
+    image: metafad/mysql
+    build: 
+      context: ./mysql/image
+      dockerfile: Dockerfile
+    volumes:
+      - ../containerdata/mysql/data:/var/lib/mysql
+      - ../containerdata/mysql/mysql_dump:/mysql_dump
+      - ../bin/mysql_script:/mysql_script
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE_1=metafad_portale
+      - MYSQL_DATABASE_2=metafad_be
+      - MYSQL_DATABASE_3=metafad_dam
+      - MYSQL_DATABASE_4=metafad_ecommerce
+    labels:
+      - "traefik.enable=false"
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    environment:
+      - PMA_HOST=mysql
+      - PMA_USER=root
+      - PMA_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    depends_on:
+      - mysql
+    labels:
+      - "traefik.enable=false"
+    # ports:
+    #   - "81:80"
+
+  cantaloupe:
+    image: metafad/cantaloupe
+    build: 
+      context: ./cantaloupe/image
+      dockerfile: Dockerfile
+    environment:
+      - JAVA_OPTS=-Xmx500m
+      - HTTPSOURCE_LOOKUP_STRATEGY=BasicLookupStrategy
+      - SOURCE_STATIC=HttpSource
+      - HTTPSOURCE_BASICLOOKUPSTRATEGY_URL_PREFIX=http://dam/admin/rest/dam/
+      - HTTPSOURCE_BASICLOOKUPSTRATEGY_URL_SUFFIX=?redirect=true
+      - PROCESSOR_FALLBACK=Java2dProcessor
+      - FILESYSTEMCACHE_PATHNAME=/var/cache/cantaloupe
+      - FILESYSTEMCACHE_DIR_DEPTH=3
+      - FILESYSTEMCACHE_DIR_NAME_LENGTH=2
+      - CACHE_SERVER_DERIVATIVE_ENABLED=true
+      - CACHE_SERVER_DERIVATIVE=FilesystemCache
+      - CACHE_SERVER_DERIVATIVE_TTL_SECONDS=2592000
+      - SLASH_SUBSTITUTE=@
+    volumes:
+      - ../containerdata/cantaloupe:/var/cache/cantaloupe
+    labels:
+      - "traefik.enable=false"
